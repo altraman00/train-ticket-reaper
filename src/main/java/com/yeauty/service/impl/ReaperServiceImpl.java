@@ -102,7 +102,7 @@ public class ReaperServiceImpl implements ReaperService {
             }
 
             //获取适合的列车信息（符合配置文件中配置的）
-            List<JsonNode> trainNodes = getApplicableTrainInfoNodes(trainInfosNode, seatName, timeRange, webhookToken);
+            List<JsonNode> trainNodes = getApplicableTrainInfoNodes(trainInfosNode,justGD, seatName, timeRange, webhookToken);
             if (trainNodes == null) {
                 logger.error("没有符合要求的班次,请检查 " + timeRange + " 是否有符合要求的列车信息。目标座位为:" + seatName);
                 DingRobotUtils.send(webhookToken, "没有符合要求的班次,请检查 " + timeRange + " 是否有符合要求的列车信息。目标座位为:" + seatName, true);
@@ -115,7 +115,7 @@ public class ReaperServiceImpl implements ReaperService {
                     continue;
                 }
 
-                JsonNode classSeatNode = getClassSeatNode(infoNode, seatName);
+                JsonNode classSeatNode = getClassSeatNode(infoNode,justGD, seatName);
                 JsonNode seatNum = classSeatNode.get("seatNum");
 
                 if ("0".equals(seatNum.asText())) {
@@ -184,7 +184,7 @@ public class ReaperServiceImpl implements ReaperService {
             }
 
             //获取适合的列车信息（符合配置文件中配置的）
-            List<JsonNode> trainNodes = getApplicableTrainInfoNodes(trainInfosNode, seatName, timeRange, webhookToken);
+            List<JsonNode> trainNodes = getApplicableTrainInfoNodes(trainInfosNode,justGD, seatName, timeRange, webhookToken);
             if (trainNodes == null) {
                 logger.error("没有符合要求的班次,请检查 " + timeRange + " 是否有符合要求的列车信息");
                 DingRobotUtils.send(webhookToken, "没有符合要求的班次,请检查 " + timeRange + " 是否有符合要求的列车信息", true);
@@ -198,7 +198,7 @@ public class ReaperServiceImpl implements ReaperService {
                         continue;
                     }
 
-                    JsonNode classSeatNode = getClassSeatNode(infoNode, seatName);
+                    JsonNode classSeatNode = getClassSeatNode(infoNode,justGD, seatName);
                     JsonNode seatNum = classSeatNode.get("seatNum");
 
                     //通过登陆获取accessToken
@@ -262,7 +262,7 @@ public class ReaperServiceImpl implements ReaperService {
     private void occupy(String accessToken, JsonNode orderNode, JsonNode infoNode, String seatName, Map<String, String> headers, String webhookToken) {
         JsonNode trainCodeNode = infoNode.get("trainCode");
         JsonNode deptTimeNode = infoNode.get("deptTime");
-        JsonNode classSeatNode = getClassSeatNode(infoNode, seatName);
+        JsonNode classSeatNode = getClassSeatNode(infoNode,justGD, seatName);
         JsonNode seatNum = classSeatNode.get("seatNum");
 
         JsonNode orderDataNode = orderNode.get("data");
@@ -321,7 +321,7 @@ public class ReaperServiceImpl implements ReaperService {
         return accessToken;
     }
 
-    private List<JsonNode> getApplicableTrainInfoNodes(JsonNode trainInfosNode, String seatName, String timeRange, String webhookToken) {
+    private List<JsonNode> getApplicableTrainInfoNodes(JsonNode trainInfosNode,String justGD, String seatName, String timeRange, String webhookToken) {
         List<JsonNode> trainInfoNodes = new ArrayList<>();
         for (JsonNode infoNode : trainInfosNode) {
             JsonNode trainCodeNode = infoNode.get("trainCode");
@@ -343,6 +343,13 @@ public class ReaperServiceImpl implements ReaperService {
                 continue;
             }
 
+            //如果"是否只看高铁/动车"为false，则表示只看普通列车(12306.com的车次接口中设置了findGD=false，尼玛也把高铁数据返回了)
+            JsonNode trainCode = infoNode.get("trainCode");
+            String trainCodeStr = trainCode.asText().trim();
+            if(justGD.equals("false") && (trainCodeStr.contains("G") || trainCodeStr.contains("D"))){
+                continue;
+            }
+
             JsonNode seatList = infoNode.get("seatList");
             if (seatList == null) {
                 DingRobotUtils.send(webhookToken, "解析车次:" + trainCodeNode.asText() + " 出发时间:" + deptTimeNode.asText() + " 的座位列表有误，info:" + deptTimeNode.toString(), true);
@@ -350,12 +357,13 @@ public class ReaperServiceImpl implements ReaperService {
                 continue;
             }
 
-            JsonNode classSeatNode = getClassSeatNode(infoNode, seatName);
+            JsonNode classSeatNode = getClassSeatNode(infoNode, justGD,seatName);
 
             if (classSeatNode == null) {
                 logger.warn("车次:" + trainCodeNode.asText() + " 出发时间:" + deptTimeNode.asText() + "无对应的座位:" + seatName);
                 continue;
             }
+
             JsonNode seatNum = classSeatNode.get("seatNum");
             if (seatNum == null) {
                 logger.warn("车次:" + trainCodeNode.asText() + " 出发时间:" + deptTimeNode.asText() + "无对应的座位号码");
@@ -363,6 +371,7 @@ public class ReaperServiceImpl implements ReaperService {
             }
 
             trainInfoNodes.add(infoNode);
+            logger.warn("符合筛选条件的车次：{}",infoNode.asText().trim());
         }
         if (trainInfoNodes.size() > 0) {
             return trainInfoNodes;
@@ -370,15 +379,40 @@ public class ReaperServiceImpl implements ReaperService {
         return null;
     }
 
-    private JsonNode getClassSeatNode(JsonNode infoNode, String seatName) {
+    private JsonNode getClassSeatNode(JsonNode infoNode,String justGD, String seatName) {
+        //可选座位
         JsonNode seatList = infoNode.get("seatList");
+        //车次
+        JsonNode trainCode = infoNode.get("trainCode");
+        //发车时间
+        JsonNode deptTime = infoNode.get("deptTime");
+        //到达时间
+        JsonNode arrTime = infoNode.get("arrTime");
+        //运行时长
+        JsonNode runTime = infoNode.get("runTime");
+        //是否当日到达
+        JsonNode arriveDays = infoNode.get("arriveDays");
+        //出发站
+        JsonNode deptStationName = infoNode.get("deptStationName");
+        //到达站
+        JsonNode arrStationName = infoNode.get("arrStationName");
+
         if (seatList == null) {
             return null;
         }
         JsonNode seatNameNode;
         for (JsonNode seatNode : seatList) {
             seatNameNode = seatNode.get("seatName");
-            if (seatNameNode != null && seatName.equals(seatNameNode.asText().trim())) {
+            //座位名称
+            String seatNameStr = seatNameNode.asText().trim();
+            //剩余座位数
+            String seatNumStr = seatNode.get("seatNum").asText().trim();
+            //票价
+            String seatPriceStr = seatNode.get("seatPrice").asText().trim();
+
+            logger.warn("车次：" + trainCode + "  " + deptStationName + "-->" + arrStationName + "  " + deptTime + "-->" + arrTime + " " + seatNameStr + ":" + seatNumStr + "  票价:" + seatPriceStr + "  运行时长:" + runTime + " --> " + arriveDays );
+
+            if (seatNameNode != null && seatName.equals(seatNameStr)) {
                 return seatNode;
             }
         }
@@ -420,6 +454,8 @@ public class ReaperServiceImpl implements ReaperService {
             try {
                 //trainInfo接口的url 为:http://api.12306.com/v1/train/trainInfos?arrStationCode=SHH&deptDate=2018-04-08&deptStationCode=SZQ&findGD=false
                 trainInfoUrl = "http://api.12306.com/v1/train/trainInfos?arrStationCode=" + toStationCode + "&deptDate=" + deptDate + "&deptStationCode=" + fromStationCode + "&findGD=" + justGD.toLowerCase();
+
+                logger.info(trainInfoUrl);
 
             } catch (Exception e) {
                 logger.error("火车票查询页的url转换trainInfo接口的url出错，请看填写url是否正确", e);
